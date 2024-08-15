@@ -1,0 +1,107 @@
+name: DOE FA1 Pipeline
+
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{matrix.os}}
+
+    strategy:
+      matrix: 
+        dotnet-version: ['8.0.x']
+        os: [macos-latest, windows-latest, ubuntu-24.04]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: ${{ matrix.dotnet-version }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build the application
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Publish artifacts
+        run: dotnet publish --configuration Release --output ./publish/
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-artifacts
+          path: ./publish/
+
+  test:
+    name: Test
+    runs-on: ${{matrix.os}}
+    needs: build
+
+    strategy:
+      matrix: 
+        dotnet-version: ['8.0.x']
+        os: [macos-latest, windows-latest, ubuntu-24.04]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: ${{ matrix.dotnet-version }}
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Run unit tests
+        run: dotnet test --no-restore --collect:"XPlat Code Coverage"
+
+      - name: Run code analysis
+        run: dotnet tool run dotnet-format
+
+  deploy:
+    name: Deploy to Staging
+    runs-on: ubuntu-24.04
+    needs: test
+    if: github.ref == 'refs/heads/main'
+
+     steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: build-artifacts
+
+      - name: Azure WebApp Deploy
+        uses: azure/webapps-deploy@v2
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_PUBLISH_PROFILE }}
+          package: ./publish/
+          
+      - name: Notify on failure via email
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: 'Deployment Failed'
+          body: 'The deployment to Azure Web App has failed. Check the logs for more information.'
+          to: 'acoetzee458@gmail.com'
+          from: 'adriaancoetzee2004@gmail.com'
